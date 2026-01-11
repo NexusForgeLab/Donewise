@@ -1,7 +1,3 @@
-Based on the code structure and files provided, here is a comprehensive, systematic `README.md` file designed for a new user to install, configure, and run the **Donewise** application.
-
----
-
 # Donewise - Collaborative Shopping List & Task Manager
 
 **Donewise** is a self-hosted, web-based application for managing shopping lists, daily tasks, and recurring chores. It features real-time updates, group collaboration, file attachments, and a mobile-friendly interface (PWA).
