@@ -1,0 +1,14 @@
+services:
+  web:
+    build: .
+    container_name: Donewise
+    ports:
+      - "8088:80"
+    environment:
+      - APP_URL=https://list.tejasholla.com
+      - PHP_TZ=Asia/Kolkata
+      - SQLITE_PATH=/var/www/html/data/app.db
+    volumes:
+      - ./:/var/www/html
+      - ./data:/var/www/html/data
+    restart: unless-stopped

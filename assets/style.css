@@ -1,0 +1,548 @@
+:root {
+  --bg: #f8f5f2;          /* Warm paper off-white */
+  --card-bg: #ffffff;     /* Crisp white sheet */
+  --text: #2b2b2b;        /* Soft pencil black */
+  --muted: #888888;       /* Faded ink */
+  --accent: #ff3b30;      /* Pop Red (Marker/Correction) */
+  --accent-blue: #007aff; /* Pen Blue */
+  --line-color: #e0e0e0;  /* Notebook line gray */
+  --border-color: #1a1a1a;/* Ink outline */
+  
+  --font-body: system-ui, -apple-system, sans-serif;
+  --font-mono: 'Courier New', Courier, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background-color: var(--bg);
+  background-image: radial-gradient(#d1d1d1 1px, transparent 1px);
+  background-size: 24px 24px;
+  color: var(--text);
+  font-family: var(--font-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; text-decoration: none; }
+
+.wrap {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 32px 20px;
+}
+
+/* --- Top Navigation --- */
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 40px;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.brand {
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: -1px;
+  background: var(--accent);
+  color: white;
+  padding: 8px 16px;
+  transform: rotate(-2deg);
+  box-shadow: 3px 3px 0 var(--border-color);
+  border: 2px solid var(--border-color);
+  white-space: nowrap;
+}
+
+.nav {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* --- Buttons --- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: white;
+  border: 2px solid var(--border-color);
+  padding: 10px 18px;
+  font-weight: 700;
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: 4px 4px 0 var(--border-color);
+  border-radius: 6px;
+  transition: transform 0.1s, box-shadow 0.1s;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  min-height: 44px;
+  font-family: var(--font-body);
+  font-size: 15px;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--border-color);
+  background: var(--accent-blue);
+  color: white;
+  border-color: var(--border-color);
+}
+
+.btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--border-color);
+}
+
+/* --- THEMED INPUTS & DROPDOWNS (NEW) --- */
+input, select, textarea {
+  background: var(--card-bg);
+  border: 2px solid var(--border-color); /* Match theme border */
+  color: var(--text);
+  padding: 10px 16px;
+  border-radius: 6px;
+  outline: none;
+  width: 100%;
+  font-family: var(--font-mono); /* Typewriter look */
+  font-size: 15px;
+  min-height: 44px;
+  transition: all 0.2s;
+  box-shadow: 2px 2px 0 rgba(0,0,0,0.05); /* Subtle shadow */
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--accent-blue);
+  box-shadow: 4px 4px 0 rgba(0,122,255, 0.2);
+  transform: translate(-1px, -1px);
+}
+
+/* Custom Arrow for Dropdowns */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 36px;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%232b2b2b' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 16px;
+  cursor: pointer;
+}
+
+textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+/* --- Header User Menu (NEW) --- */
+.user-menu {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 8px;
+}
+
+.user-name {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.group-name {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+/* --- Badges & Pills --- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: white;
+  padding: 0 8px;
+  height: 20px;
+  border-radius: 10px;
+  font-size: 11px;
+  border: 1px solid var(--border-color);
+  margin-left: 8px;
+  font-weight: 700;
+  font-family: var(--font-body);
+}
+
+.pill {
+  display: inline-block;
+  border: 1px solid var(--border-color);
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #fff;
+  font-family: var(--font-mono);
+}
+
+/* --- Layout Cards --- */
+.card {
+  background: var(--card-bg);
+  border: 2px solid var(--border-color);
+  padding: 28px;
+  margin-bottom: 24px;
+  box-shadow: 8px 8px 0 rgba(0,0,0,0.05); 
+}
+
+/* --- Typography --- */
+h1 {
+  margin-top: 0;
+  margin-bottom: 24px;
+  font-weight: 800;
+  font-size: 2rem;
+  color: var(--text);
+  background: linear-gradient(120deg, transparent 0%, transparent 60%, rgba(255, 59, 48, 0.3) 60%, rgba(255, 59, 48, 0.3) 100%);
+  display: inline-block;
+}
+h2 {
+  margin-top: 0;
+  font-weight: 700;
+  font-size: 1.5rem;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-family: var(--font-mono);
+  margin-bottom: 4px;
+}
+
+/* --- Forms & Rows --- */
+.row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap; 
+  align-items: flex-end;
+}
+
+.row > div {
+  flex: 1;
+  min-width: 200px;
+}
+
+/* --- Task List --- */
+.task {
+  display: flex;
+  flex-wrap: wrap; 
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 4px;
+  border-bottom: 1px dashed var(--line-color); 
+}
+
+.task:last-child { border-bottom: none; }
+
+.task .text {
+  font-size: 1.1rem;
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.task.done .text {
+  text-decoration: line-through;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 3px;
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+/* --- Suggestion Dropdown --- */
+.suggest { position: relative; width: 100%; }
+.suggest-list {
+  position: absolute;
+  top: 100%; left: 0; right: 0;
+  background: white;
+  border: 2px solid var(--border-color);
+  z-index: 50;
+  margin-top: 4px;
+  box-shadow: 4px 4px 0 rgba(0,0,0,0.1);
+  display: none;
+}
+.suggest-item {
+  padding: 12px;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+.suggest-item:hover {
+  background: #f4f4f4;
+  color: var(--accent-blue);
+}
+
+/* --- Tables --- */
+.table-container { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 400px; }
+td, th { padding: 12px; border-bottom: 1px solid #eee; text-align: left; }
+th {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  font-size: 0.8rem;
+  letter-spacing: 1px;
+}
+
+/* --- Comments --- */
+.comment {
+  margin-bottom: 20px;
+  position: relative;
+  border-left: 2px dashed #bbb;
+  padding-left: 16px;
+}
+
+.comment-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.comment-meta .author {
+  font-weight: 700;
+  background: var(--text);
+  color: var(--bg);
+  padding: 2px 6px;
+  transform: rotate(-1deg);
+  display: inline-block;
+}
+
+.comment-meta .date {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.comment-body {
+  background: #fff;
+  padding: 12px;
+  border: 1px solid var(--text);
+  box-shadow: 3px 3px 0 rgba(0,0,0,0.05);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: #333;
+}
+
+.comment-actions {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+.comment-actions .sep { color: #ccc; margin: 0 6px; }
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--accent-blue);
+  font-weight: 700;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: none;
+  font-family: var(--font-mono);
+}
+.btn-link:hover { text-decoration: underline; }
+.btn-link.delete-link { color: var(--accent); }
+
+/* Mobile */
+@media (max-width: 600px) {
+  .wrap { padding: 20px 16px; }
+  .topbar { flex-direction: column; align-items: stretch; gap: 16px; margin-bottom: 24px; }
+  .brand { text-align: center; transform: rotate(0deg); }
+  .nav { justify-content: center; }
+  .nav .btn, .nav select { flex: 1; padding: 8px 12px; font-size: 13px; }
+  .card { padding: 20px; box-shadow: 5px 5px 0 rgba(0,0,0,0.05); }
+  h1 { font-size: 1.8rem; }
+  .task > div:last-child { margin-left: auto; }
+  .row > div { min-width: 100%; }
+  form .btn { width: 100%; }
+  form.suggest .btn { width: auto; }
+}
+
+/* --- TAGS & FILTERS --- */
+.filter-bar {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  margin-top: 10px;
+  /* Hide scrollbar but keep functionality */
+  scrollbar-width: none; 
+}
+.filter-bar::-webkit-scrollbar { display: none; }
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: white;
+  border: 1px solid var(--border-color);
+  color: var(--text);
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  transition: all 0.2s;
+}
+
+.filter-chip.active {
+  background: var(--text);
+  color: white;
+  border-color: var(--text);
+  transform: translateY(-1px);
+  box-shadow: 2px 2px 0 rgba(0,0,0,0.2);
+}
+
+/* Dynamic color override for tag chips if needed */
+/* We can use the CSS variable set inline */
+
+.tags-container {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 8px;
+  flex-wrap: wrap;
+  vertical-align: middle;
+}
+
+.tag-pill {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  border: 1px solid transparent;
+  display: inline-block;
+  text-transform: lowercase;
+}
+
+/* Default Untagged Style */
+.tag-pill.untagged {
+  background: #eee;
+  color: #888;
+  border-color: #ddd;
+  font-style: italic;
+}
+/* --- MODAL POPUP --- */
+.modal-overlay {
+  display: none; /* Hidden by default */
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(43, 43, 43, 0.4);
+  z-index: 1000; /* Modal Level */
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  backdrop-filter: blur(2px);
+}
+
+.modal-content {
+  background: var(--card-bg);
+  border: 2px solid var(--border-color);
+  box-shadow: 10px 10px 0 rgba(0,0,0,0.15);
+  padding: 24px;
+  width: 100%;
+  max-width: 500px;
+  position: relative;
+  animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes popIn {
+  from { transform: scale(0.9); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.modal-header {
+  font-size: 1.5rem;
+  font-weight: 800;
+  margin-bottom: 20px;
+  border-bottom: 2px dashed var(--line-color);
+  padding-bottom: 10px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+/* Ensure suggestions appear ABOVE the modal */
+.suggest-list {
+  z-index: 2000 !important; 
+}
+
+/* --- ATTACHMENTS --- */
+.attachment-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.attachment-item {
+  position: relative;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f9f9f9;
+}
+
+.attachment-preview {
+  width: 100%;
+  height: 100px;
+  object-fit: cover;
+  display: block;
+}
+
+.attachment-icon {
+  width: 100%;
+  height: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  background: #eee;
+  color: #888;
+}
+
+.attachment-meta {
+  padding: 6px;
+  font-size: 0.75rem;
+  background: white;
+  border-top: 1px solid #eee;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-del-file {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid #ccc;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  line-height: 22px;
+  text-align: center;
+  color: red;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 14px;
+}
+.btn-del-file:hover { background: red; color: white; border-color: red; }
