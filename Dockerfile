@@ -14,8 +14,8 @@ RUN apt-get update \
 # Enable PDO + SQLite extensions
 RUN docker-php-ext-install pdo pdo_sqlite
 
-# Increase Upload Limit to 20MB
-RUN echo "upload_max_filesize = 20M\npost_max_size = 20M" > /usr/local/etc/php/conf.d/uploads.ini
+# Increase Upload Limit to 500MB and Memory to 512MB to handle large images
+RUN echo "upload_max_filesize = 200M\npost_max_size = 2050M\nmax_file_uploads = 20\nmemory_limit = 512M" > /usr/local/etc/php/conf.d/uploads.ini
 
 WORKDIR /var/www/html
 

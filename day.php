@@ -16,62 +16,57 @@ $st = $pdo->prepare("SELECT id FROM days WHERE group_id=? AND day_date=?");
 $st->execute([$user['group_id'], $date]);
 $dayId = (int)$st->fetchColumn();
 
-// --- HANDLE ADD TASK ---
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['text']) && !isset($_POST['edit_mode'])) {
+// --- HANDLE ADD TASK (TEXT + IMAGE) ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['text']) || isset($_FILES['task_image'])) && !isset($_POST['edit_mode'])) {
   csrf_check();
-  $text = trim($_POST['text']);
+  $text = trim($_POST['text'] ?? '');
+  
+  // Handle File Upload Check
+  $hasFile = isset($_FILES['task_image']) && $_FILES['task_image']['error'] === UPLOAD_ERR_OK;
+  
+  // If text is empty but we have a file, give it a default name
+  if ($text === '' && $hasFile) {
+      $text = "Image Attachment";
+  }
+
   if ($text !== '') {
     $norm = normalize_text($text);
 
-    // 1. ROBUST DUPLICATE CHECK
-    // Fetch all incomplete tasks to compare nicely (ignoring tags in DB)
-    $st = $pdo->prepare("SELECT id, text FROM tasks WHERE group_id=? AND is_done=0");
-    $st->execute([$user['group_id']]);
-    $incompleteTasks = $st->fetchAll();
+    // 1. Create Task (Basic logic kept, but removed strict duplicate merge for file uploads to simplify)
+    $st = $pdo->prepare("INSERT INTO tasks(group_id, day_id, text, text_norm, created_by) VALUES(?,?,?,?,?)");
+    $st->execute([$user['group_id'], $dayId, $text, $norm, $user['id']]);
+    $taskId = (int)$pdo->lastInsertId();
+
+    $cleanText = parse_and_save_tags($pdo, (int)$user['group_id'], $taskId, $text);
     
-    $existing = null;
-    foreach ($incompleteTasks as $it) {
-        // Normalize DB text on the fly to match new logic
-        if (normalize_text($it['text']) === $norm) {
-            $existing = $it;
-            break;
+    // Update History
+    $pdo->prepare("INSERT INTO item_history(group_id, text, text_norm, use_count, last_used_at) VALUES(?,?,?,?,datetime('now')) ON CONFLICT(group_id, text_norm) DO UPDATE SET use_count=use_count+1, last_used_at=datetime('now')")->execute([$user['group_id'], $cleanText, $norm, 1]);
+    
+    // 2. Handle Image Upload
+    if ($hasFile) {
+        $f = $_FILES['task_image'];
+        $allowed = ['jpg','jpeg','png','gif','webp'];
+        $ext = strtolower(pathinfo($f['name'], PATHINFO_EXTENSION));
+        
+        if (in_array($ext, $allowed)) {
+            $uploadDir = 'uploads';
+            if (!is_dir(__DIR__ . "/$uploadDir")) {
+                mkdir(__DIR__ . "/$uploadDir", 0775, true);
+            }
+            // Generate unique name: taskID_timestamp_random
+            $newName = "{$taskId}_" . time() . "_" . bin2hex(random_bytes(4)) . ".$ext";
+            $destPath = "$uploadDir/$newName";
+            
+            if (move_uploaded_file($f['tmp_name'], __DIR__ . "/$destPath")) {
+                $st = $pdo->prepare("INSERT INTO attachments(group_id, task_id, user_id, filename, filepath, file_type) VALUES(?,?,?,?,?,?)");
+                $st->execute([$user['group_id'], $taskId, $user['id'], $f['name'], $destPath, $ext]);
+            }
         }
     }
 
-    if ($existing) {
-        // --- MERGE LOGIC ---
-        $taskId = (int)$existing['id'];
-        $currentText = $existing['text'];
-        
-        // Append #urgent if not present
-        if (stripos($currentText, '#urgent') === false) {
-            $currentText .= ' #urgent';
-        }
-
-        // Move to Today, Update Text
-        $pdo->prepare("UPDATE tasks SET text=?, text_norm=?, day_id=? WHERE id=?")
-            ->execute([$currentText, $norm, $dayId, $taskId]);
-
-        // Re-process tags
-        $pdo->prepare("DELETE FROM task_tags WHERE task_id=?")->execute([$taskId]);
-        $cleanText = parse_and_save_tags($pdo, (int)$user['group_id'], $taskId, $currentText);
-
-        if(function_exists('send_group_notification')) 
-            send_group_notification($pdo, $user['group_id'], $user['id'], $user['display_name'], 'task_add', "bumped/urgent: $cleanText", $taskId);
-
-    } else {
-        // --- CREATE NEW ---
-        $st = $pdo->prepare("INSERT INTO tasks(group_id, day_id, text, text_norm, created_by) VALUES(?,?,?,?,?)");
-        $st->execute([$user['group_id'], $dayId, $text, $norm, $user['id']]);
-        $taskId = (int)$pdo->lastInsertId();
-
-        $cleanText = parse_and_save_tags($pdo, (int)$user['group_id'], $taskId, $text);
-        
-        // Update History
-        $pdo->prepare("INSERT INTO item_history(group_id, text, text_norm, use_count, last_used_at) VALUES(?,?,?,?,datetime('now')) ON CONFLICT(group_id, text_norm) DO UPDATE SET use_count=use_count+1, last_used_at=datetime('now')")->execute([$user['group_id'], $cleanText, $norm, 1]);
-        
-        if(function_exists('send_group_notification')) 
-            send_group_notification($pdo, $user['group_id'], $user['id'], $user['display_name'], 'task_add', "added: $cleanText", $taskId);
+    if(function_exists('send_group_notification')) {
+        $msg = $hasFile ? "added task with image: $cleanText" : "added: $cleanText";
+        send_group_notification($pdo, $user['group_id'], $user['id'], $user['display_name'], 'task_add', $msg, $taskId);
     }
     
     header('Location: /day.php?date=' . $date);
@@ -84,12 +79,14 @@ $st = $pdo->prepare("SELECT * FROM tags WHERE group_id=? ORDER BY name ASC");
 $st->execute([$user['group_id']]);
 $allTags = $st->fetchAll();
 
+// Added subquery to fetch the first image attachment
 $sql = "
   SELECT 
     t.*, 
     u.display_name AS created_name, 
     du.display_name AS done_name,
     (SELECT COUNT(*) FROM comments c WHERE c.task_id = t.id) AS comment_count,
+    (SELECT filepath FROM attachments WHERE task_id = t.id AND file_type IN ('jpg','jpeg','png','gif','webp') ORDER BY created_at ASC LIMIT 1) as task_image,
     GROUP_CONCAT(tg.id || ':' || tg.name || ':' || tg.color) as tag_info
   FROM tasks t
   JOIN users u ON u.id = t.created_by
@@ -119,6 +116,9 @@ render_header("Donewise - $date", $user);
 <style>
 .btn-ghost { background: transparent; border-color: transparent; color: var(--muted); box-shadow: none; }
 .btn-ghost:hover { background: transparent !important; color: var(--accent-blue) !important; border-color: transparent !important; text-decoration: underline; }
+.upload-btn { cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:1.2rem; padding:0 12px; border:2px dashed var(--border-color); border-radius:6px; background:white; height:44px; margin-right:8px; transition:0.2s; }
+.upload-btn:hover, .upload-btn.has-file { border-color:var(--accent-blue); background:#f0f8ff; color:var(--accent-blue); }
+.task-thumb { width:50px; height:50px; object-fit:cover; border-radius:6px; margin-right:12px; border:1px solid #ccc; flex-shrink:0; background:#eee; }
 </style>
 
 <div class="card" style="padding-bottom:10px;">
@@ -135,16 +135,24 @@ render_header("Donewise - $date", $user);
     <?php endforeach; ?>
   </div>
 
-  <form method="post" class="suggest" style="margin-top:16px;">
+  <form method="post" class="suggest" style="margin-top:16px;" enctype="multipart/form-data">
     <input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"/>
     <div class="row" style="align-items:center">
-      <div style="flex:1;min-width:200px">
-        <input id="taskInput" name="text" placeholder="e.g., Milk #food #urgent" autocomplete="off" required />
-        <div class="suggest-list"></div>
+      <div style="flex:1;min-width:200px; display:flex;">
+        <label class="upload-btn" title="Attach Image" id="uploadLbl">
+            📷
+            <input type="file" name="task_image" id="taskImgInput" accept="image/*" style="display:none" onchange="document.getElementById('uploadLbl').classList.add('has-file');">
+        </label>
+        <div style="flex:1; position:relative;">
+            <input id="taskInput" name="text" placeholder="e.g., Milk #food" autocomplete="off" />
+            <div class="suggest-list"></div>
+        </div>
       </div>
       <button class="btn" type="submit">Add</button>
-      <a class="btn" href="/day.php?date=<?php echo date('Y-m-d', strtotime($date . ' -1 day')); ?>">&#8592;</a>
-      <a class="btn" href="/day.php?date=<?php echo date('Y-m-d', strtotime($date . ' +1 day')); ?>">&#8594;</a>
+      <div style="display:flex; gap:5px;">
+        <a class="btn" href="/day.php?date=<?php echo date('Y-m-d', strtotime($date . ' -1 day')); ?>">&#8592;</a>
+        <a class="btn" href="/day.php?date=<?php echo date('Y-m-d', strtotime($date . ' +1 day')); ?>">&#8594;</a>
+      </div>
     </div>
   </form>
 </div>
@@ -166,7 +174,14 @@ render_header("Donewise - $date", $user);
         }
     ?>
     <div class="task <?php echo $isDone ? 'done' : ''; ?>" data-id="<?php echo $t['id']; ?>">
-      <div style="cursor:grab; margin-right:10px; color:#ccc; font-size:1.2rem;">&#9776;</div>
+      <div style="cursor:grab; margin-right:6px; color:#ccc; font-size:1.2rem;">&#9776;</div>
+      
+      <?php if(!empty($t['task_image'])): ?>
+        <a href="/<?php echo h($t['task_image']); ?>" target="_blank">
+            <img src="/<?php echo h($t['task_image']); ?>" class="task-thumb" loading="lazy" alt="Task Image" />
+        </a>
+      <?php endif; ?>
+
       <div style="flex-grow:1;">
         <div class="text">
             <?php 
