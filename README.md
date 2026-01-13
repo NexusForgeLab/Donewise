@@ -4,6 +4,8 @@
 
 Built with **PHP** and **SQLite**, it is lightweight and easy to deploy using Docker.
 
+![Donewise Logo](assets/icon-512.png)
+
 ## Features
 
 * **Group Collaboration:** Create groups (e.g., Family, Office) and invite members via link.
