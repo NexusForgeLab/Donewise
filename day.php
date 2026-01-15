@@ -78,6 +78,12 @@ $st = $pdo->prepare("SELECT * FROM tags WHERE group_id=? ORDER BY sort_order ASC
 $st->execute([$user['group_id']]);
 $tags = $st->fetchAll();
 
+// Map Tag Names to Colors/IDs for fast lookup
+$tagMap = [];
+foreach ($tags as $t) {
+    $tagMap[mb_strtolower($t['name'])] = $t;
+}
+
 // Fetch Users (For Filters)
 $st = $pdo->prepare("SELECT id, username, display_name FROM users WHERE group_id=? ORDER BY display_name ASC");
 $st->execute([$user['group_id']]);
@@ -122,12 +128,10 @@ $st->execute($params);
 $allTasks = $st->fetchAll();
 
 // --- STATS CALCULATION ---
-// Calculate stats for the *Selected User* or *Current User* (if no filter)
 $statsUserId = is_numeric($filterUser) ? $filterUser : $user['id'];
 $statsName = ($statsUserId == $user['id']) ? "Your" : "User";
 foreach ($groupUsers as $gu) { if($gu['id'] == $statsUserId) $statsName = $gu['display_name']; }
 
-// We need a separate query for accurate daily stats because $allTasks might be filtered by tag
 $stStat = $pdo->prepare("SELECT COUNT(*) as total, SUM(CASE WHEN is_done=1 THEN 1 ELSE 0 END) as done FROM tasks WHERE day_id=? AND assigned_to=?");
 $stStat->execute([$dayId, $statsUserId]);
 $userStats = $stStat->fetch();
@@ -138,8 +142,7 @@ $progPercent = ($progTotal > 0) ? round(($progDone / $progTotal) * 100) : 0;
 
 // Distribute Tasks to Sections
 foreach ($allTasks as $t) {
-    $assigned = false;
-    // Apply Tag Filter in PHP to keep section logic simple
+    // Check Filter Tag
     if (is_numeric($filterTag)) {
         $tTags = explode(',', $t['tag_ids'] ?? '');
         if (!in_array($filterTag, $tTags)) continue;
@@ -147,18 +150,43 @@ foreach ($allTasks as $t) {
         continue;
     }
 
-    if ($t['tag_ids']) {
-        $taskTagIds = explode(',', $t['tag_ids']);
-        foreach ($sections as $tagId => $sec) {
-            if ($tagId === 'untagged') continue; 
-            if (in_array($tagId, $taskTagIds)) {
-                $sections[$tagId]['tasks'][] = $t;
-                $assigned = true;
-                break; 
+    // --- NEW LOGIC: Determine Section by Text Order ---
+    // 1. Parse tags from text to get order
+    preg_match_all('/#(\w+)/u', $t['text'], $matches);
+    $tagsInOrder = $matches[1] ?? [];
+    
+    $targetSectionId = 'untagged';
+    $isUrgent = false;
+
+    // 2. Priority 1: Check for Urgent anywhere
+    foreach ($tagsInOrder as $tagName) {
+        if (strcasecmp($tagName, 'urgent') === 0) {
+            $isUrgent = true;
+            break;
+        }
+    }
+
+    if ($isUrgent) {
+        // Find Urgent ID
+        if (isset($tagMap['urgent'])) {
+            $targetSectionId = $tagMap['urgent']['id'];
+        }
+    } else {
+        // 3. Priority 2: Use First Tag
+        if (!empty($tagsInOrder)) {
+            $firstTagName = mb_strtolower($tagsInOrder[0]);
+            if (isset($tagMap[$firstTagName])) {
+                $targetSectionId = $tagMap[$firstTagName]['id'];
             }
         }
     }
-    if (!$assigned) { $sections['untagged']['tasks'][] = $t; }
+
+    // Assign
+    if (isset($sections[$targetSectionId])) {
+        $sections[$targetSectionId]['tasks'][] = $t;
+    } else {
+        $sections['untagged']['tasks'][] = $t;
+    }
 }
 
 render_header("Donewise - $date", $user);
@@ -221,7 +249,8 @@ render_header("Donewise - $date", $user);
 <?php foreach ($sections as $tagId => $sec): ?>
     <?php 
     $isUrgent = (isset($sec['meta']['name']) && strtolower($sec['meta']['name']) === 'urgent');
-    if (empty($sec['tasks']) && !$isUrgent && $tagId !== 'untagged') continue;
+    // Hide empty sections (except untagged if strictly empty logic desired, or urgent if preferred)
+    if (empty($sec['tasks']) && !$isUrgent && $tagId !== 'untagged') continue; 
     if ($tagId === 'untagged' && empty($sec['tasks'])) continue;
     
     $accentColor = $sec['meta']['color'] ?? '#ccc';
@@ -252,6 +281,25 @@ render_header("Donewise - $date", $user);
                             $displayText = preg_replace('/#(\w+)/u', '', $displayText); 
                             echo linkify(trim($displayText)); 
                             ?>
+                            
+                            <span class="tags-container" style="margin-left:8px;">
+                            <?php 
+                            // Extract tags specifically from text for rendering
+                            preg_match_all('/#(\w+)/u', $t['text'], $matches);
+                            $tagsToRender = array_unique($matches[1] ?? []);
+                            
+                            foreach($tagsToRender as $tagName) {
+                                $lowerName = mb_strtolower($tagName);
+                                if (isset($tagMap[$lowerName])) {
+                                    $tg = $tagMap[$lowerName];
+                                    echo "<span class='tag-pill' style='color:{$tg['color']}; border:1px solid {$tg['color']}; margin-right:4px;'>#".h($tg['name'])."</span>";
+                                } else {
+                                    // Fallback for tags in text but not in DB yet (edge case)
+                                    echo "<span class='tag-pill' style='color:#777; border:1px solid #ccc; margin-right:4px;'>#".h($tagName)."</span>";
+                                }
+                            }
+                            ?>
+                            </span>
                         </div>
                         <div class="muted" style="font-size:0.8rem; display:flex; align-items:center; gap:8px;">
                             <span><?php echo h($t['created_name']); ?></span>
@@ -312,6 +360,7 @@ render_header("Donewise - $date", $user);
 window.addEventListener('load',function(){
     if(typeof attachSuggest==='function'){attachSuggest('taskInput');attachSuggest('editText');}
 
+    // Sort Sections
     Sortable.create(document.getElementById('sectionsContainer'), {
         animation: 150, handle: '.section-header',
         onEnd: function() {
@@ -321,13 +370,35 @@ window.addEventListener('load',function(){
         }
     });
 
+    // Sort/Move Tasks
     document.querySelectorAll('.section-body').forEach(el => {
         Sortable.create(el, {
             group: 'tasks', animation: 150, handle: '.handle',
             onEnd: function(evt) {
+                // 1. Handle Reorder within list
                 let ids = [];
-                document.querySelectorAll('.task').forEach(div => ids.push(div.getAttribute('data-id')));
+                evt.to.querySelectorAll('.task').forEach(div => ids.push(div.getAttribute('data-id')));
                 fetch('api/reorder.php', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids: ids}) });
+
+                // 2. Handle Section Change (Tag Reorder)
+                if (evt.from !== evt.to) {
+                    const newSection = evt.to.closest('.section-wrapper');
+                    
+                    const newTagId = newSection ? newSection.getAttribute('data-tag-id') : 'untagged';
+                    const taskId = evt.item.getAttribute('data-id');
+
+                    // Call API to rewrite text and assign new tag as primary
+                    fetch('api/assign_tag.php', { 
+                        method: 'POST', 
+                        headers: {'Content-Type': 'application/json'}, 
+                        body: JSON.stringify({ 
+                            task_id: taskId, 
+                            tag_id: newTagId
+                        }) 
+                    }).then(() => {
+                        window.location.reload(); 
+                    });
+                }
             }
         });
     });
