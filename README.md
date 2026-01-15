@@ -179,5 +179,3 @@ To enable all latest features (Recurring tasks, Attachments, Tags, etc.), **visi
 **Dates/Times are incorrect**
 
 * Check the `PHP_TZ` variable in your `docker-compose.yml`. You must restart the container after changing this: `docker compose down && docker compose up -d`.
-
-```
