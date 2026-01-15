@@ -1,171 +1,183 @@
 # Donewise - Collaborative Shopping List & Task Manager
 
-**Donewise** is a self-hosted, web-based application for managing shopping lists, daily tasks, and recurring chores. It features real-time updates, group collaboration, file attachments, and a mobile-friendly interface (PWA).
+**Donewise** is a robust, self-hosted web application designed to simplify household management. It combines a shared shopping list, daily task planner, and chore tracker into a clean, mobile-friendly interface.
 
-Built with **PHP** and **SQLite**, it is lightweight and easy to deploy using Docker.
+Built with **PHP** and **SQLite**, Donewise is lightweight, privacy-focused, and easy to deploy using Docker.
 
-## Features
+![Donewise App Icon](assets/icon-512.png)
 
-* **Group Collaboration:** Create groups (e.g., Family, Office) and invite members via link.
-* **Real-time Updates:** Instant notifications and list updates using Server-Sent Events (SSE).
-* **Smart Lists:** Auto-suggestions based on history and hashtag support (e.g., `Milk #grocery #urgent`).
-* **Recurring Tasks:** Set items to reappear every X days or on specific days of the week.
-* **Attachments:** Upload images or documents to specific tasks.
-* **Mobile Ready:** Installable as a Progressive Web App (PWA) on iOS and Android.
-* **Dark Mode/Theming:** Clean, notebook-style UI.
+## ✨ Features
+
+### Core Functionality
+* **Daily Task Lists:** Navigate between days to plan ahead or review past tasks.
+* **Real-time Collaboration:** Lists update instantly across all devices using Server-Sent Events (SSE).
+* **Smart Input:**
+    * **Tags:** Organize items with hashtags (e.g., `Buy Milk #grocery`).
+    * **Mentions:** Assign tasks to family members using `@username`.
+* **Drag & Drop:** Reorder tasks and tags to prioritize what matters most.
+
+### Organization & Details
+* **Recurring Tasks:** Set items to repeat automatically every X days (e.g., "Water plants") or on specific days of the week (e.g., "Take out trash" every Thursday).
+* **Rich Task Details:** Click any task to:
+    * Add **Comments** for extra context.
+    * Upload **Attachments** (images, PDFs) directly to the task.
+    * View **History** of changes.
+    * **Move** the task to a different date.
+
+### Group Management
+* **Multiple Groups:** Create separate spaces for "Home", "Work", or "Trip Planning".
+* **Invite System:** Generate secure invite links to easily add members.
+* **Member Roles:** Group creators can manage members (kick users) and transfer ownership.
+* **Notifications:** See who joined, left, or updated critical items.
+
+### Mobile & UI
+* **Progressive Web App (PWA):** Installable on iOS and Android for a native app experience.
+* **Dark Mode:** Automatically respects your device's theme settings.
+* **Context Switching:** Quickly switch between different groups via the user menu.
 
 ---
 
-## Prerequisites
+## 🛠 Prerequisites
 
 * **Docker** and **Docker Compose** installed on your machine.
-* (Optional) A reverse proxy (like Nginx or Traefik) if you plan to expose this to the internet with SSL.
+* *(Optional)* A reverse proxy (Nginx, Traefik, or Nginx Proxy Manager) for SSL/HTTPS access.
 
 ---
 
-## 🚀 Quick Start (Docker)
+## 🚀 Installation Guide
 
-### 1. Project Setup
-
-Create a folder for your project and place the source code inside it. Ensure the directory structure looks like this:
+### 1. Clone & Setup
+Create a directory for your project and place the source code inside. Your structure should look like this:
 
 ```text
-/shopping-list-app
-  ├── app/
+/donewise
   ├── api/
+  ├── app/
   ├── assets/
-  ├── data/          <-- Will be created automatically
+  ├── data/          <-- Created automatically
   ├── sql/
-  ├── uploads/       <-- Will be created automatically
+  ├── uploads/       <-- Created automatically
   ├── docker-compose.yml
-  ├── Dockerfile
-  └── ... (other php files)
+  └── ... (PHP files)
 
 ```
 
-### 2. Build and Run
+### 2. Configure Environment
 
-Open your terminal in the project root and run:
+Edit `docker-compose.yml` to match your environment.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `APP_URL` | `http://localhost:8088` | **Crucial:** Set this to your actual access URL. Used for invite links. |
+| `PHP_TZ` | `Asia/Kolkata` | Set to your timezone (e.g., `America/New_York`) for accurate task dates. |
+
+### 3. Build & Run
+
+Open a terminal in your project folder and run:
 
 ```bash
 docker compose up -d --build
 
 ```
 
-### 3. Permissions Setup (Crucial)
+### 4. Fix Permissions (Important)
 
-SQLite requires write permissions on the directory where the database file resides. Run the following commands to ensure the web server (`www-data`) can write to the data and upload folders:
+SQLite and the upload system need write access. Run these commands to fix permissions inside the container:
 
 ```bash
-# Fix permissions for the data folder
+# 1. Allow web server to write to the database folder
 docker exec -it Donewise chown -R www-data:www-data /var/www/html/data
 docker exec -it Donewise chmod -R 775 /var/www/html/data
 
-# Fix permissions for the uploads folder
+# 2. Allow web server to write to the uploads folder
 docker exec -it Donewise mkdir -p /var/www/html/uploads
 docker exec -it Donewise chown -R www-data:www-data /var/www/html/uploads
 docker exec -it Donewise chmod -R 775 /var/www/html/uploads
 
 ```
 
-### 4. Database Initialization
-
-1. Open your browser and navigate to: `http://localhost:8088/install.php`
-* You should see a "✅ Installed" message.
-
-
-2. **Apply Updates:** To ensure all features (Tags, Attachments, Recurring Tasks) work, visit these URLs in order once:
-* `http://localhost:8088/update_db_v4.php` (Adds created_by to groups)
-* `http://localhost:8088/update_db_v5.php` (Adds tags table)
-* `http://localhost:8088/update_db_v6.php` (Adds attachments table)
-* `http://localhost:8088/update_recurring.php` (Adds recurring tasks)
-
-
-
-### 5. Create Your First Group
-
-* Go to `http://localhost:8088/register.php`.
-* Create a Group Name (e.g., "Home"), Username, and Password.
-* You are now logged in!
-
 ---
 
-## ⚙️ Configuration
+## 📦 Database Setup & Updates
 
-The application uses environment variables defined in `docker-compose.yml`.
+Use the built-in scripts to initialize and upgrade your database schema.
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `APP_URL` | `http://localhost:8088` | **Change this** to your actual URL or `http://localhost:8088`. Used for invite links. |
-| `PHP_TZ` | `Asia/Kolkata` | Sets the timezone for timestamps. Change to your local TZ (e.g., `America/New_York`). |
-| `SQLITE_PATH` | `/var/www/html/data/app.db` | Internal path to the database file. |
+### 1. Initial Install
 
-To change these, edit `docker-compose.yml` and restart the container:
+Open your browser and visit:
 
-```bash
-docker compose down && docker compose up -d
+`http://localhost:8088/install.php`
 
-```
+*(You should see a "✅ Installed" message).*
+
+### 2. Apply Feature Updates
+
+To enable all latest features (Recurring tasks, Attachments, Tags, etc.), **visit the following URLs in order**. Even if you are installing fresh, run these to ensure the schema is complete.
+
+1. `http://localhost:8088/update_db_v4.php` (Group Owners)
+2. `http://localhost:8088/update_db_v5.php` (Tags)
+3. `http://localhost:8088/update_db_v6.php` (Attachments)
+4. `http://localhost:8088/update_db_v7.php` (Schema Patches)
+5. `http://localhost:8088/update_db_v8.php` (Schema Patches)
+6. `http://localhost:8088/update_db_v9.php` (Latest Schema)
+7. `http://localhost:8088/update_recurring.php` (Recurring Logic)
+
+> **Security Tip:** After setup, delete `install.php` and the `update_*.php` files from the server:
+> ```bash
+> docker exec -it Donewise rm /var/www/html/install.php
+> 
+> ```
+> 
+> 
 
 ---
 
 ## 📖 Usage Guide
 
-### Managing Items
+### Getting Started
 
-* **Add Item:** Type in the main input box.
-* **Tags:** Use hashtags to categorize (e.g., `Carrots #veg`).
-* **Urgent:** Adding `#urgent` usually highlights the item or bumps priority.
+1. Go to `http://localhost:8088/register.php`.
+2. Create your first Group (e.g., "Home").
+3. You are now the **Group Owner**.
 
+### Managing Tasks
 
-* **Edit:** Click the pencil icon on an item to change text or move it to a different date.
-* **Complete:** Click "Done". It moves to the bottom.
-* **Undo:** Click "Undo" on a completed item to bring it back.
+* **Add:** Type in the main input. Use `#` for tags (e.g., `#urgent`) and `@` to assign users.
+* **Edit:** Click the **pencil icon** to rename or tap the task text to open **Task Details**.
+* **Details View:** Inside Task Details, you can upload photos (receipts, screenshots) or chat about the task in the comments.
+* **Move:** Need to delay a task? Open details and select a new date.
 
-### Recurring Tasks
+### Recurring Items
 
 1. Click **Recurring** in the top navigation.
-2. Add a rule (e.g., "Pay Rent" every "30 days" OR every "Friday").
-3. The system checks these rules every time you load a page and automatically adds the task to your "Today" list when due.
+2. Create rules like "Pay Internet Bill" every "28 Days".
+3. Donewise automatically checks these rules when you visit the app and adds the task to "Today" if it's due.
 
-### Group Settings & Invites
+### Group Settings
 
-1. Click **Group** in the top navigation.
-2. Copy the **Invite Link** and send it to family members.
-3. They can join instantly without creating a separate group.
-4. **Switching Groups:** If you belong to multiple groups (e.g., Family and Work), click your name in the top right to switch context.
+1. Click **Group** in the header.
+2. **Invite:** Copy the Invite Link and send it to others.
+3. **Manage:** Rename the group, manage custom tags (change colors/delete), or remove members.
 
 ---
 
-## 🛠 Troubleshooting
+## ❓ Troubleshooting
 
-**Error: "General error: 14 unable to open database file"**
-This is a permission issue. The web server cannot write to the `data/` folder.
+**"General error: 14 unable to open database file"**
 
-* **Solution:** Run the permission commands listed in Step 3 of the "Quick Start" section.
+* The web server (www-data) cannot write to the `data/` folder. Re-run the permission commands in Step 4 of Installation.
 
-**Images/Attachments not uploading**
+**Images or Attachments fail to upload**
 
 * Ensure the `uploads/` folder exists and has write permissions.
-* Check the `php.ini` settings. The included Dockerfile sets `upload_max_filesize` to 20M.
+* Check that your file is within the PHP upload limit (default 20MB in the Dockerfile).
 
-**Time is wrong on tasks**
+**@Mentions list is cut off**
 
-* Update the `PHP_TZ` variable in your `docker-compose.yml` file to match your location.
+* This is a known display issue on smaller screens if the group has many members. It is resolved in the latest CSS update by adding a scrollbar to the dropdown.
 
-**Database Updates**
+**Dates/Times are incorrect**
 
-* If you see errors about "no such table: attachments" or "tags", ensure you have visited the `update_*.php` files listed in the installation steps.
-
----
-
-## 🔒 Security Note
-
-* **Delete Install Files:** After successfully setting up, you should delete `install.php` and the `update_*.php` files from your server to prevent unauthorized database resets.
-```bash
-docker exec -it Donewise rm /var/www/html/install.php
+* Check the `PHP_TZ` variable in your `docker-compose.yml`. You must restart the container after changing this: `docker compose down && docker compose up -d`.
 
 ```
-
-
-* **SSL:** It is highly recommended to run this behind a reverse proxy with HTTPS (like Nginx Proxy Manager) if accessing over the internet.

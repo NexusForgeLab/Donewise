@@ -1,6 +1,6 @@
 <?php
 require_once __DIR__ . '/app/layout.php';
-require_once __DIR__ . '/app/tag_logic.php'; // Ensure this exists from previous step
+require_once __DIR__ . '/app/tag_logic.php'; 
 $user = require_login();
 csrf_check();
 $pdo = db();
@@ -18,17 +18,41 @@ if ($taskId && $text && $newDate) {
     if ($task) {
         $pdo->beginTransaction();
 
-        // 2. Update Text
-        $norm = normalize_text($text);
-        $st = $pdo->prepare("UPDATE tasks SET text=?, text_norm=? WHERE id=?");
-        $st->execute([$text, $norm, $taskId]);
+        // 2. Process Mentions (Finds user IDs mentioned)
+        // returns the first mentioned user ID to be the 'assignee'
+        $assigneeId = process_mentions($pdo, $user['group_id'], $user['id'], $user['display_name'], $text, 'edit', $taskId);
+        
+        // If no one mentioned, keep existing assignee? Or clear?
+        // Let's keep existing unless explicitly changed.
+        // IF a user IS mentioned, we update assignment.
+        $assignSQL = "";
+        $params = [$text, $taskId];
+        
+        if ($assigneeId) {
+            $assignSQL = ", assigned_to=?";
+            $params = [$text, $assigneeId, $taskId];
+        } else {
+            // Keep old params
+            $params = [$text, $taskId];
+        }
 
-        // 3. Update Tags (Clear old -> Parse new)
+        $norm = normalize_text($text);
+        
+        // 3. Update Text & Assignee
+        // We inject the assignSQL dynamically
+        if ($assigneeId) {
+            $st = $pdo->prepare("UPDATE tasks SET text=?, text_norm=?, assigned_to=? WHERE id=?");
+            $st->execute([$text, $norm, $assigneeId, $taskId]);
+        } else {
+            $st = $pdo->prepare("UPDATE tasks SET text=?, text_norm=? WHERE id=?");
+            $st->execute([$text, $norm, $taskId]);
+        }
+
+        // 4. Update Tags
         $pdo->prepare("DELETE FROM task_tags WHERE task_id=?")->execute([$taskId]);
         parse_and_save_tags($pdo, $user['group_id'], $taskId, $text);
 
-        // 4. Move Date (If changed)
-        // Find ID of target date
+        // 5. Move Date (If changed)
         $st = $pdo->prepare("INSERT OR IGNORE INTO days(group_id, day_date) VALUES(?, ?)");
         $st->execute([$user['group_id'], $newDate]);
         
@@ -44,6 +68,6 @@ if ($taskId && $text && $newDate) {
     }
 }
 
-// Return to the previous page (the day view)
 header('Location: ' . $_SERVER['HTTP_REFERER']);
 exit;
+?>

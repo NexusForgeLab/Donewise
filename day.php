@@ -4,10 +4,9 @@ require_once __DIR__ . '/app/tag_logic.php';
 $user = require_login();
 $pdo  = db();
 
+// --- 1. SETUP & INPUT HANDLING ---
 $date = $_GET['date'] ?? date('Y-m-d');
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) { $date = date('Y-m-d'); }
-
-$filterTag = $_GET['tag'] ?? 'all';
 
 // Ensure day exists
 $st = $pdo->prepare("INSERT OR IGNORE INTO days(group_id, day_date) VALUES(?, ?)");
@@ -16,50 +15,44 @@ $st = $pdo->prepare("SELECT id FROM days WHERE group_id=? AND day_date=?");
 $st->execute([$user['group_id'], $date]);
 $dayId = (int)$st->fetchColumn();
 
-// --- HANDLE ADD TASK (TEXT + IMAGE) ---
+// --- HELPER: Parse Assignments ---
+function get_assignee_from_text($pdo, $groupId, $text) {
+    if (preg_match('/@([a-zA-Z0-9_]+)/', $text, $matches)) {
+        $username = $matches[1];
+        $st = $pdo->prepare("SELECT id FROM users WHERE group_id=? AND username=?");
+        $st->execute([$groupId, $username]);
+        return $st->fetchColumn() ?: null;
+    }
+    return null;
+}
+
+// HANDLE ADD TASK
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['text']) || isset($_FILES['task_image'])) && !isset($_POST['edit_mode'])) {
   csrf_check();
   $text = trim($_POST['text'] ?? '');
-  
-  // Handle File Upload Check
   $hasFile = isset($_FILES['task_image']) && $_FILES['task_image']['error'] === UPLOAD_ERR_OK;
-  
-  // If text is empty but we have a file, give it a default name
-  if ($text === '' && $hasFile) {
-      $text = "Image Attachment";
-  }
+  if ($text === '' && $hasFile) $text = "Image Attachment";
 
   if ($text !== '') {
     $norm = normalize_text($text);
+    $assignToId = get_assignee_from_text($pdo, $user['group_id'], $text);
 
-    // 1. Create Task (Basic logic kept, but removed strict duplicate merge for file uploads to simplify)
-    $st = $pdo->prepare("INSERT INTO tasks(group_id, day_id, text, text_norm, created_by) VALUES(?,?,?,?,?)");
-    $st->execute([$user['group_id'], $dayId, $text, $norm, $user['id']]);
+    $st = $pdo->prepare("INSERT INTO tasks(group_id, day_id, text, text_norm, created_by, assigned_to) VALUES(?,?,?,?,?,?)");
+    $st->execute([$user['group_id'], $dayId, $text, $norm, $user['id'], $assignToId]);
     $taskId = (int)$pdo->lastInsertId();
-
+    
     $cleanText = parse_and_save_tags($pdo, (int)$user['group_id'], $taskId, $text);
     
     // Update History
     $pdo->prepare("INSERT INTO item_history(group_id, text, text_norm, use_count, last_used_at) VALUES(?,?,?,?,datetime('now')) ON CONFLICT(group_id, text_norm) DO UPDATE SET use_count=use_count+1, last_used_at=datetime('now')")->execute([$user['group_id'], $cleanText, $norm, 1]);
-    
-    // 2. Handle Image Upload
+
     if ($hasFile) {
         $f = $_FILES['task_image'];
-        $allowed = ['jpg','jpeg','png','gif','webp'];
         $ext = strtolower(pathinfo($f['name'], PATHINFO_EXTENSION));
-        
-        if (in_array($ext, $allowed)) {
-            $uploadDir = 'uploads';
-            if (!is_dir(__DIR__ . "/$uploadDir")) {
-                mkdir(__DIR__ . "/$uploadDir", 0775, true);
-            }
-            // Generate unique name: taskID_timestamp_random
-            $newName = "{$taskId}_" . time() . "_" . bin2hex(random_bytes(4)) . ".$ext";
-            $destPath = "$uploadDir/$newName";
-            
-            if (move_uploaded_file($f['tmp_name'], __DIR__ . "/$destPath")) {
-                $st = $pdo->prepare("INSERT INTO attachments(group_id, task_id, user_id, filename, filepath, file_type) VALUES(?,?,?,?,?,?)");
-                $st->execute([$user['group_id'], $taskId, $user['id'], $f['name'], $destPath, $ext]);
+        if (in_array($ext, ['jpg','jpeg','png','gif','webp'])) {
+            $dest = "uploads/{$taskId}_" . time() . "_" . bin2hex(random_bytes(4)) . ".$ext";
+            if (move_uploaded_file($f['tmp_name'], __DIR__ . "/$dest")) {
+                $pdo->prepare("INSERT INTO attachments(group_id, task_id, user_id, filename, filepath, file_type) VALUES(?,?,?,?,?,?)")->execute([$user['group_id'], $taskId, $user['id'], $f['name'], $dest, $ext]);
             }
         }
     }
@@ -67,71 +60,139 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['text']) || isset($_F
     if(function_exists('send_group_notification')) {
         $msg = $hasFile ? "added task with image: $cleanText" : "added: $cleanText";
         send_group_notification($pdo, $user['group_id'], $user['id'], $user['display_name'], 'task_add', $msg, $taskId);
+        if ($assignToId && $assignToId != $user['id']) {
+            send_group_notification($pdo, $user['group_id'], $user['id'], $user['display_name'], 'assign', "assigned you: $cleanText", $taskId);
+        }
     }
     
-    header('Location: /day.php?date=' . $date);
-    exit;
+    header('Location: day.php?date=' . $date); exit;
   }
 }
 
-// --- FETCH DATA ---
-$st = $pdo->prepare("SELECT * FROM tags WHERE group_id=? ORDER BY name ASC");
-$st->execute([$user['group_id']]);
-$allTags = $st->fetchAll();
+// --- 2. FETCH DATA & FILTERS ---
+$filterTag = $_GET['tag'] ?? 'all';
+$filterUser = $_GET['user'] ?? 'all';
 
-// Added subquery to fetch the first image attachment
+// Fetch Tags
+$st = $pdo->prepare("SELECT * FROM tags WHERE group_id=? ORDER BY sort_order ASC, name ASC");
+$st->execute([$user['group_id']]);
+$tags = $st->fetchAll();
+
+// Fetch Users (For Filters)
+$st = $pdo->prepare("SELECT id, username, display_name FROM users WHERE group_id=? ORDER BY display_name ASC");
+$st->execute([$user['group_id']]);
+$groupUsers = $st->fetchAll();
+
+// Initialize Sections
+$sections = [];
+foreach ($tags as $tag) { $sections[$tag['id']] = ['meta' => $tag, 'tasks' => []]; }
+$sections['untagged'] = ['meta' => ['id'=>'untagged', 'name'=>'Untagged', 'color'=>'#777'], 'tasks' => []];
+
+// Build Query
 $sql = "
   SELECT 
     t.*, 
     u.display_name AS created_name, 
     du.display_name AS done_name,
+    au.display_name AS assigned_name, 
+    au.username AS assigned_username,
     (SELECT COUNT(*) FROM comments c WHERE c.task_id = t.id) AS comment_count,
     (SELECT filepath FROM attachments WHERE task_id = t.id AND file_type IN ('jpg','jpeg','png','gif','webp') ORDER BY created_at ASC LIMIT 1) as task_image,
-    GROUP_CONCAT(tg.id || ':' || tg.name || ':' || tg.color) as tag_info
+    GROUP_CONCAT(tg.id) as tag_ids
   FROM tasks t
   JOIN users u ON u.id = t.created_by
   LEFT JOIN users du ON du.id = t.done_by
+  LEFT JOIN users au ON au.id = t.assigned_to
   LEFT JOIN task_tags tt ON tt.task_id = t.id
   LEFT JOIN tags tg ON tg.id = tt.tag_id
   WHERE t.day_id = ?
 ";
 $params = [$dayId];
 
-if ($filterTag === 'untagged') {
-    $sql .= " AND t.id NOT IN (SELECT task_id FROM task_tags)";
-} elseif (is_numeric($filterTag)) {
-    $sql .= " AND t.id IN (SELECT task_id FROM task_tags WHERE tag_id = ?)";
-    $params[] = $filterTag;
+// Apply User Filter
+if (is_numeric($filterUser)) {
+    $sql .= " AND t.assigned_to = ?";
+    $params[] = $filterUser;
 }
 
 $sql .= " GROUP BY t.id ORDER BY t.is_done ASC, t.sort_order ASC, t.id DESC";
 
 $st = $pdo->prepare($sql);
 $st->execute($params);
-$rows = $st->fetchAll();
+$allTasks = $st->fetchAll();
+
+// --- STATS CALCULATION ---
+// Calculate stats for the *Selected User* or *Current User* (if no filter)
+$statsUserId = is_numeric($filterUser) ? $filterUser : $user['id'];
+$statsName = ($statsUserId == $user['id']) ? "Your" : "User";
+foreach ($groupUsers as $gu) { if($gu['id'] == $statsUserId) $statsName = $gu['display_name']; }
+
+// We need a separate query for accurate daily stats because $allTasks might be filtered by tag
+$stStat = $pdo->prepare("SELECT COUNT(*) as total, SUM(CASE WHEN is_done=1 THEN 1 ELSE 0 END) as done FROM tasks WHERE day_id=? AND assigned_to=?");
+$stStat->execute([$dayId, $statsUserId]);
+$userStats = $stStat->fetch();
+$progTotal = $userStats['total'] ?: 0;
+$progDone = $userStats['done'] ?: 0;
+$progPercent = ($progTotal > 0) ? round(($progDone / $progTotal) * 100) : 0;
+
+
+// Distribute Tasks to Sections
+foreach ($allTasks as $t) {
+    $assigned = false;
+    // Apply Tag Filter in PHP to keep section logic simple
+    if (is_numeric($filterTag)) {
+        $tTags = explode(',', $t['tag_ids'] ?? '');
+        if (!in_array($filterTag, $tTags)) continue;
+    } elseif ($filterTag === 'untagged' && !empty($t['tag_ids'])) {
+        continue;
+    }
+
+    if ($t['tag_ids']) {
+        $taskTagIds = explode(',', $t['tag_ids']);
+        foreach ($sections as $tagId => $sec) {
+            if ($tagId === 'untagged') continue; 
+            if (in_array($tagId, $taskTagIds)) {
+                $sections[$tagId]['tasks'][] = $t;
+                $assigned = true;
+                break; 
+            }
+        }
+    }
+    if (!$assigned) { $sections['untagged']['tasks'][] = $t; }
+}
 
 render_header("Donewise - $date", $user);
 ?>
 
-<style>
-.btn-ghost { background: transparent; border-color: transparent; color: var(--muted); box-shadow: none; }
-.btn-ghost:hover { background: transparent !important; color: var(--accent-blue) !important; border-color: transparent !important; text-decoration: underline; }
-.upload-btn { cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:1.2rem; padding:0 12px; border:2px dashed var(--border-color); border-radius:6px; background:white; height:44px; margin-right:8px; transition:0.2s; }
-.upload-btn:hover, .upload-btn.has-file { border-color:var(--accent-blue); background:#f0f8ff; color:var(--accent-blue); }
-.task-thumb { width:50px; height:50px; object-fit:cover; border-radius:6px; margin-right:12px; border:1px solid #ccc; flex-shrink:0; background:#eee; }
-</style>
-
 <div class="card" style="padding-bottom:10px;">
   <div style="display:flex; justify-content:space-between; align-items:center;">
     <h1><?php echo h($date); ?></h1>
-    <a href="/day.php?date=<?php echo date('Y-m-d'); ?>" class="btn" style="font-size:0.8rem">Today</a>
+    <a href="day.php?date=<?php echo date('Y-m-d'); ?>" class="btn" style="font-size:0.8rem">Today</a>
   </div>
 
-  <div class="filter-bar">
-    <a href="?date=<?php echo $date; ?>&tag=all" class="filter-chip <?php echo ($filterTag=='all')?'active':''; ?>">All</a>
-    <a href="?date=<?php echo $date; ?>&tag=untagged" class="filter-chip <?php echo ($filterTag=='untagged')?'active':''; ?>">Untagged</a>
-    <?php foreach($allTags as $tag): ?>
-        <a href="?date=<?php echo $date; ?>&tag=<?php echo $tag['id']; ?>" class="filter-chip <?php echo ($filterTag==$tag['id'])?'active':''; ?>" style="--tag-color:<?php echo $tag['color']; ?>">#<?php echo h($tag['name']); ?></a>
+  <div style="background:#f4f4f4; border-radius:8px; padding:10px; margin-top:10px; display:flex; align-items:center; gap:12px;">
+    <div style="font-weight:bold; font-size:0.9rem; color:#555; white-space:nowrap;">
+        <?php echo h($statsName); ?>'s Progress: <?php echo "$progDone / $progTotal"; ?>
+    </div>
+    <div style="flex:1; background:#ddd; height:8px; border-radius:4px; overflow:hidden;">
+        <div style="width:<?php echo $progPercent; ?>%; background:var(--accent-blue); height:100%; transition:width 0.3s;"></div>
+    </div>
+    <div style="font-size:0.8rem; color:#777;"><?php echo $progPercent; ?>%</div>
+  </div>
+
+  <div class="filter-bar" style="margin-top:15px;">
+    <a href="?date=<?php echo $date; ?>&user=<?php echo $filterUser; ?>&tag=all" class="filter-chip <?php echo ($filterTag=='all')?'active':''; ?>">All Tags</a>
+    <?php foreach($tags as $tag): ?>
+        <a href="?date=<?php echo $date; ?>&user=<?php echo $filterUser; ?>&tag=<?php echo $tag['id']; ?>" class="filter-chip <?php echo ($filterTag==$tag['id'])?'active':''; ?>">#<?php echo h($tag['name']); ?></a>
+    <?php endforeach; ?>
+    
+    <div style="width:1px; background:#ccc; margin:0 8px;"></div>
+    
+    <a href="?date=<?php echo $date; ?>&tag=<?php echo $filterTag; ?>&user=all" class="filter-chip <?php echo ($filterUser=='all')?'active':''; ?>">All Users</a>
+    <?php foreach($groupUsers as $gu): ?>
+        <a href="?date=<?php echo $date; ?>&tag=<?php echo $filterTag; ?>&user=<?php echo $gu['id']; ?>" class="filter-chip <?php echo ($filterUser==$gu['id'])?'active':''; ?>" style="--tag-color:var(--accent-blue);">
+           @<?php echo h($gu['username']); ?>
+        </a>
     <?php endforeach; ?>
   </div>
 
@@ -139,85 +200,93 @@ render_header("Donewise - $date", $user);
     <input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"/>
     <div class="row" style="align-items:center">
       <div style="flex:1;min-width:200px; display:flex;">
-        <label class="upload-btn" title="Attach Image" id="uploadLbl">
-            📷
-            <input type="file" name="task_image" id="taskImgInput" accept="image/*" style="display:none" onchange="document.getElementById('uploadLbl').classList.add('has-file');">
+        <label class="upload-btn" title="Attach Image" id="uploadLbl">📷
+            <input type="file" name="task_image" accept="image/*" style="display:none" onchange="document.getElementById('uploadLbl').classList.add('has-file');">
         </label>
         <div style="flex:1; position:relative;">
-            <input id="taskInput" name="text" placeholder="e.g., Milk #food" autocomplete="off" />
+            <input id="taskInput" name="text" placeholder="e.g., Review report @<?php echo h($user['username']); ?> #urgent" autocomplete="off" />
             <div class="suggest-list"></div>
         </div>
       </div>
       <button class="btn" type="submit">Add</button>
       <div style="display:flex; gap:5px;">
-        <a class="btn" href="/day.php?date=<?php echo date('Y-m-d', strtotime($date . ' -1 day')); ?>">&#8592;</a>
-        <a class="btn" href="/day.php?date=<?php echo date('Y-m-d', strtotime($date . ' +1 day')); ?>">&#8594;</a>
+        <a class="btn" href="day.php?date=<?php echo date('Y-m-d', strtotime($date . ' -1 day')); ?>">&#8592;</a>
+        <a class="btn" href="day.php?date=<?php echo date('Y-m-d', strtotime($date . ' +1 day')); ?>">&#8594;</a>
       </div>
     </div>
   </form>
 </div>
 
-<div class="card">
-  <h2>Items</h2>
-  <?php if (!count($rows)): ?><div class="muted">No items found.</div><?php endif; ?>
-  <div id="taskList">
-  <?php foreach ($rows as $t): ?>
+<div id="sectionsContainer">
+<?php foreach ($sections as $tagId => $sec): ?>
     <?php 
-        $isDone = ((int)$t['is_done'] === 1); 
-        $myTags = [];
-        if ($t['tag_info']) {
-            $raw = explode(',', $t['tag_info']);
-            foreach($raw as $r) {
-                $parts = explode(':', $r);
-                if(count($parts)>=3) $myTags[] = ['id'=>$parts[0], 'name'=>$parts[1], 'color'=>$parts[2]];
-            }
-        }
+    $isUrgent = (isset($sec['meta']['name']) && strtolower($sec['meta']['name']) === 'urgent');
+    if (empty($sec['tasks']) && !$isUrgent && $tagId !== 'untagged') continue;
+    if ($tagId === 'untagged' && empty($sec['tasks'])) continue;
+    
+    $accentColor = $sec['meta']['color'] ?? '#ccc';
     ?>
-    <div class="task <?php echo $isDone ? 'done' : ''; ?>" data-id="<?php echo $t['id']; ?>">
-      <div style="cursor:grab; margin-right:6px; color:#ccc; font-size:1.2rem;">&#9776;</div>
-      
-      <?php if(!empty($t['task_image'])): ?>
-        <a href="/<?php echo h($t['task_image']); ?>" target="_blank">
-            <img src="/<?php echo h($t['task_image']); ?>" class="task-thumb" loading="lazy" alt="Task Image" />
-        </a>
-      <?php endif; ?>
 
-      <div style="flex-grow:1;">
-        <div class="text">
-            <?php 
-            $displayText = h($t['text']);
-            $displayText = preg_replace('/#(\w+)/u', '', $displayText); 
-            echo trim($displayText) ?: h($t['text']); 
-            ?>
-            <span class="tags-container">
-                <?php if(empty($myTags)): ?><span class="tag-pill untagged">Untagged</span><?php else: ?>
-                    <?php foreach($myTags as $mt): ?>
-                        <span class="tag-pill" style="background-color:<?php echo $mt['color']; ?>20; color:<?php echo $mt['color']; ?>; border-color:<?php echo $mt['color']; ?>;">#<?php echo h($mt['name']); ?></span>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-            </span>
+    <div class="section-wrapper" data-tag-id="<?php echo $tagId; ?>">
+        <div class="section-header" style="border-left: 6px solid <?php echo $accentColor; ?>">
+            <span><?php echo h(ucfirst($sec['meta']['name'])); ?> <span class="badge" style="background:#fff; border:1px solid #ccc; color:#555"><?php echo count($sec['tasks']); ?></span></span>
+            <span style="color:#ccc; font-size:1.2rem;">&#9776;</span>
         </div>
-        <div class="muted"><?php echo h($t['created_name']); ?><?php if ($isDone): ?> &#8226; done by <?php echo h($t['done_name']); ?><?php endif; ?></div>
-      </div>
-      <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap">
-        <a class="btn" style="padding:10px 14px;" href="/task_details.php?id=<?php echo $t['id']; ?>"><span>&#128172;</span><?php if($t['comment_count']>0) echo " <b>{$t['comment_count']}</b>"; ?></a>
-        <?php if (!$isDone): ?>
-          <form method="post" action="/task_done.php" style="display:inline"><input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"/><input type="hidden" name="task_id" value="<?php echo $t['id']; ?>"/><button class="btn" type="submit">Done</button></form>
-        <?php else: ?>
-          <form method="post" action="/task_undo.php" style="display:inline"><input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"/><input type="hidden" name="task_id" value="<?php echo $t['id']; ?>"/><button class="btn" type="submit">Undo</button></form>
-        <?php endif; ?>
-        <button class="btn" style="padding:10px 14px;" onclick="openEditModal(<?php echo $t['id']; ?>, '<?php echo addslashes(h($t['text'])); ?>', '<?php echo $date; ?>')">&#9998;</button>
-        <form method="post" action="/task_delete.php" style="display:inline" onsubmit="return confirm('Delete?');"><input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"/><input type="hidden" name="task_id" value="<?php echo $t['id']; ?>"/><button class="btn" style="padding:10px;" title="Delete">&#128465;</button></form>
-      </div>
+
+        <div class="section-body" id="list-<?php echo $tagId; ?>">
+            <?php foreach ($sec['tasks'] as $t): ?>
+                <?php $isDone = ((int)$t['is_done'] === 1); ?>
+                <div class="task <?php echo $isDone ? 'done' : ''; ?>" data-id="<?php echo $t['id']; ?>">
+                  
+                  <div style="display:flex; align-items:flex-start; width:100%">
+                      <div class="handle" style="cursor:grab; margin-right:12px; color:#ddd; font-size:1.2rem; padding-top:2px;">&#8942;</div>
+                      
+                      <?php if(!empty($t['task_image'])): ?>
+                        <a href="<?php echo h($t['task_image']); ?>" target="_blank"><img src="<?php echo h($t['task_image']); ?>" class="task-thumb" /></a>
+                      <?php endif; ?>
+
+                      <div style="flex-grow:1;">
+                        <div class="text">
+                            <?php 
+                            $displayText = h($t['text']);
+                            $displayText = preg_replace('/#(\w+)/u', '', $displayText); 
+                            echo linkify(trim($displayText)); 
+                            ?>
+                        </div>
+                        <div class="muted" style="font-size:0.8rem; display:flex; align-items:center; gap:8px;">
+                            <span><?php echo h($t['created_name']); ?></span>
+                            <?php if ($isDone): ?> <span>• done by <?php echo h($t['done_name']); ?></span><?php endif; ?>
+                            
+                            <?php if (!empty($t['assigned_name'])): ?>
+                                <span class="pill" style="background:#e3f2fd; color:#0d47a1; border-color:#90caf9;">
+                                    ➜ <?php echo h($t['assigned_name']); ?>
+                                </span>
+                            <?php endif; ?>
+                        </div>
+                      </div>
+                  </div>
+
+                  <div style="display:flex; justify-content:flex-end; gap:5px; margin-top:5px; width:100%; padding-left:30px;">
+                    <a class="btn" style="padding:6px 10px; font-size:0.8rem" href="task_details.php?id=<?php echo $t['id']; ?>">💬 <?php if($t['comment_count']>0) echo $t['comment_count']; ?></a>
+                    <?php if (!$isDone): ?>
+                      <form method="post" action="task_done.php" style="display:inline"><input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"/><input type="hidden" name="task_id" value="<?php echo $t['id']; ?>"/><button class="btn" style="padding:6px 10px; font-size:0.8rem">✔</button></form>
+                    <?php else: ?>
+                      <form method="post" action="task_undo.php" style="display:inline"><input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"/><input type="hidden" name="task_id" value="<?php echo $t['id']; ?>"/><button class="btn" style="padding:6px 10px; font-size:0.8rem">↺</button></form>
+                    <?php endif; ?>
+                    <button class="btn" style="padding:6px 10px; font-size:0.8rem" onclick="openEditModal(<?php echo $t['id']; ?>, '<?php echo addslashes(h($t['text'])); ?>', '<?php echo $date; ?>')">✏</button>
+                    <form method="post" action="task_delete.php" style="display:inline" onsubmit="return confirm('Delete?');"><input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"/><input type="hidden" name="task_id" value="<?php echo $t['id']; ?>"/><button class="btn" style="padding:6px 10px; font-size:0.8rem; color:red;">🗑</button></form>
+                  </div>
+                </div>
+            <?php endforeach; ?>
+        </div>
     </div>
-  <?php endforeach; ?>
-  </div>
+<?php endforeach; ?>
 </div>
 
 <div id="editModal" class="modal-overlay">
   <div class="modal-content">
     <div class="modal-header">Edit Item</div>
-    <form action="/task_edit.php" method="post">
+    <form action="task_edit.php" method="post" name="editForm" id="editForm">
         <input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"/>
         <input type="hidden" name="task_id" id="editTaskId" />
         <div style="margin-bottom:15px;" class="suggest">
@@ -229,20 +298,51 @@ render_header("Donewise - $date", $user);
             <div class="muted">Date</div>
             <input type="date" name="new_date" id="editDate" required />
         </div>
-        <div class="modal-actions">
-            <button type="button" class="btn btn-ghost" onclick="closeEditModal()">Cancel</button>
-            <button type="submit" class="btn">Save Changes</button>
+        <div class="modal-actions" style="justify-content:space-between; gap:10px;">
+            <button type="button" class="btn" style="background:transparent; border:none; color:#666;" onclick="closeEditModal()">Cancel</button>
+            <button type="button" class="btn" style="background:#e3f2fd; color:#0d47a1;" onclick="moveTaskToday()">Move Today</button>
+            <button type="submit" class="btn">Save</button>
         </div>
     </form>
   </div>
 </div>
+
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
 <script>
-window.addEventListener('load',function(){if(typeof attachSuggest==='function'){attachSuggest('taskInput');attachSuggest('editText');}});
+window.addEventListener('load',function(){
+    if(typeof attachSuggest==='function'){attachSuggest('taskInput');attachSuggest('editText');}
+
+    Sortable.create(document.getElementById('sectionsContainer'), {
+        animation: 150, handle: '.section-header',
+        onEnd: function() {
+            let tagIds = [];
+            document.querySelectorAll('.section-wrapper').forEach(div => tagIds.push(div.getAttribute('data-tag-id')));
+            fetch('api/reorder_tags.php', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids: tagIds}) });
+        }
+    });
+
+    document.querySelectorAll('.section-body').forEach(el => {
+        Sortable.create(el, {
+            group: 'tasks', animation: 150, handle: '.handle',
+            onEnd: function(evt) {
+                let ids = [];
+                document.querySelectorAll('.task').forEach(div => ids.push(div.getAttribute('data-id')));
+                fetch('api/reorder.php', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids: ids}) });
+            }
+        });
+    });
+});
+
 const modal=document.getElementById('editModal'),editTaskId=document.getElementById('editTaskId'),editText=document.getElementById('editText'),editDate=document.getElementById('editDate');
 function openEditModal(id,text,date){editTaskId.value=id;editText.value=text;editDate.value=date;modal.style.display='flex';}
 function closeEditModal(){modal.style.display='none';}
+function moveTaskToday() {
+    const now = new Date();
+    const offset = now.getTimezoneOffset();
+    const localDate = new Date(now.getTime() - (offset*60*1000));
+    editDate.value = localDate.toISOString().split('T')[0];
+    document.getElementById('editForm').submit();
+}
 modal.addEventListener('click',e=>{if(e.target===modal)closeEditModal();});
-if(document.getElementById('taskList')){Sortable.create(document.getElementById('taskList'),{animation:150,handle:'.task > div:first-child',onEnd:function(){let ids=[];document.querySelectorAll('.task').forEach(div=>ids.push(div.getAttribute('data-id')));fetch('/api/reorder.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:ids})});}});}
 </script>
 <?php render_footer(); ?>

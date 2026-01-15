@@ -269,6 +269,10 @@ h2 {
   margin-top: 4px;
   box-shadow: 4px 4px 0 rgba(0,0,0,0.1);
   display: none;
+
+  max-height: 200px;       /* Limit height */
+  overflow-y: auto;        /* Enable vertical scrolling */
+  overscroll-behavior: contain; /* Prevent scrolling the page when list ends */
 }
 .suggest-item {
   padding: 12px;
@@ -575,4 +579,41 @@ th {
 .upload-btn:hover, .upload-btn.has-file {
   border-color: var(--accent-blue);
   background-color: #f0f8ff;
+}
+
+/* --- SECTIONS (New Grouping) --- */
+.section-wrapper {
+  background: var(--card-bg);
+  border: 2px solid var(--border-color);
+  margin-bottom: 24px;
+  box-shadow: 8px 8px 0 rgba(0,0,0,0.05);
+  overflow: hidden; /* Contains the header/body */
+}
+
+.section-header {
+  background: #f0f0f0;
+  border-bottom: 2px solid var(--border-color);
+  padding: 12px 20px;
+  font-weight: 800;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: grab;
+  color: var(--text);
+  font-size: 1.1rem;
+}
+
+.section-header:active {
+  cursor: grabbing;
+  background: #e0e0e0;
+}
+
+.section-body {
+  padding: 0 28px; /* Matches .card padding */
+  min-height: 10px;
+}
+
+/* Ensure tasks inside sections look right */
+.section-body .task:last-child {
+  border-bottom: none;
 }

@@ -1,6 +1,6 @@
 <?php
 require_once __DIR__ . '/app/layout.php';
-require_once __DIR__ . '/app/tag_logic.php'; // Required for color generation
+require_once __DIR__ . '/app/tag_logic.php'; 
 $user = require_login();
 $pdo = db();
 
@@ -52,25 +52,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // 4. ADD TAG (New Feature - Owner Only)
+    // 4. ADD TAG
     if (isset($_POST['new_tag_name']) && $isCreator) {
         $rawTag = trim($_POST['new_tag_name']);
-        // Remove leading # if user typed it
-        $cleanTag = ltrim($rawTag, '#');
-        // Normalize (lowercase, remove spaces)
-        $cleanTag = mb_strtolower(preg_replace('/\s+/', '', $cleanTag));
+        $cleanTag = mb_strtolower(preg_replace('/\s+/', '', ltrim($rawTag, '#')));
 
         if ($cleanTag !== '') {
-            // Check if exists
             $st = $pdo->prepare("SELECT id FROM tags WHERE group_id=? AND name=?");
             $st->execute([$user['group_id'], $cleanTag]);
             if ($st->fetch()) {
                 $err = "Tag #$cleanTag already exists.";
             } else {
-                // Generate Color
                 $hash = crc32($cleanTag);
                 $color = get_tag_color($hash);
-                
                 $st = $pdo->prepare("INSERT INTO tags (group_id, name, color) VALUES (?, ?, ?)");
                 $st->execute([$user['group_id'], $cleanTag, $color]);
                 $msg = "Tag #$cleanTag created.";
@@ -83,6 +77,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tagId = (int)$_POST['delete_tag_id'];
         $pdo->prepare("DELETE FROM tags WHERE id=? AND group_id=?")->execute([$tagId, $user['group_id']]);
         $msg = "Tag deleted.";
+    }
+
+    // 6. LEAVE GROUP (New Logic)
+    if (isset($_POST['leave_group'])) {
+        // Count remaining members
+        $st = $pdo->prepare("SELECT COUNT(*) FROM users WHERE group_id=?");
+        $st->execute([$user['group_id']]);
+        $count = (int)$st->fetchColumn();
+
+        if ($count <= 1) {
+            // Last person leaving: Delete the group
+            $pdo->prepare("DELETE FROM groups WHERE id=?")->execute([$user['group_id']]);
+        } else {
+            // If Owner is leaving, transfer ownership
+            if ($isCreator) {
+                // Pick a random new owner
+                $st = $pdo->prepare("SELECT id, display_name FROM users WHERE group_id=? AND id!=? ORDER BY RANDOM() LIMIT 1");
+                $st->execute([$user['group_id'], $user['id']]);
+                $newOwnerData = $st->fetch();
+
+                if ($newOwnerData) {
+                    $pdo->prepare("UPDATE groups SET created_by=? WHERE id=?")->execute([$newOwnerData['id'], $user['group_id']]);
+                    
+                    if(function_exists('send_group_notification')) {
+                         send_group_notification($pdo, $user['group_id'], $user['id'], $user['display_name'], 'general', "left. Owner is now: " . $newOwnerData['display_name']);
+                    }
+                }
+            } else {
+                if(function_exists('send_group_notification')) {
+                     send_group_notification($pdo, $user['group_id'], $user['id'], $user['display_name'], 'general', "left the group.");
+                }
+            }
+
+            // Delete the user
+            $pdo->prepare("DELETE FROM users WHERE id=?")->execute([$user['id']]);
+        }
+
+        // Logout
+        header('Location: /logout.php');
+        exit;
     }
 }
 
@@ -133,7 +167,6 @@ render_header('Group Settings', $user);
 
 <div class="card">
   <h2>Manage Tags</h2>
-  
   <?php if($isCreator): ?>
     <form method="post" style="margin-bottom:20px; padding-bottom:20px; border-bottom:1px dashed #eee;">
         <input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"/>
@@ -148,8 +181,6 @@ render_header('Group Settings', $user);
         </div>
     </form>
   <?php endif; ?>
-
-  <div class="muted" style="margin-bottom:12px;">Tap a tag to permanently delete it.</div>
   
   <?php if(empty($allTags)): ?>
     <div class="muted">No tags created yet.</div>
@@ -195,21 +226,28 @@ render_header('Group Settings', $user);
   </div>
 </div>
 
-<?php if($isCreator): ?>
 <div class="card" style="border-color:#ff3b30; background:#fff5f5;">
     <h2 style="color:#c62828;">Danger Zone</h2>
-    <button class="btn" style="background:#fff; border-color:#ff3b30; color:#ff3b30;" onclick="document.getElementById('deleteArea').style.display='block'; this.style.display='none'">Delete Group</button>
-    <div id="deleteArea" style="display:none; margin-top:15px;">
-        <form method="post">
-            <input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"/>
-            <div class="muted">Type <b><?php echo h($group['name']); ?></b> to confirm:</div>
-            <div class="row">
-                <div style="flex:1;"><input name="confirm_name" required style="border-color:#ff3b30;" /></div>
-                <div><button class="btn" type="submit" name="delete_group" style="background:#ff3b30; color:white; border:none;">Confirm</button></div>
-            </div>
-        </form>
-    </div>
+    
+    <button class="btn" style="background:#fff; border-color:#ff3b30; color:#ff3b30; margin-right:10px;" onclick="if(confirm('Are you sure you want to leave this group?')) document.getElementById('leaveForm').submit();">Leave Group</button>
+    <form method="post" id="leaveForm" style="display:none">
+        <input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"/>
+        <input type="hidden" name="leave_group" value="1"/>
+    </form>
+
+    <?php if($isCreator): ?>
+        <button class="btn" style="background:#ff3b30; color:white; border:none;" onclick="document.getElementById('deleteArea').style.display='block'; this.style.display='none'">Delete Group</button>
+        <div id="deleteArea" style="display:none; margin-top:15px;">
+            <form method="post">
+                <input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"/>
+                <div class="muted">Type <b><?php echo h($group['name']); ?></b> to confirm:</div>
+                <div class="row">
+                    <div style="flex:1;"><input name="confirm_name" required style="border-color:#ff3b30;" /></div>
+                    <div><button class="btn" type="submit" name="delete_group" style="background:#ff3b30; color:white; border:none;">Confirm</button></div>
+                </div>
+            </form>
+        </div>
+    <?php endif; ?>
 </div>
-<?php endif; ?>
 
 <?php render_footer(); ?>
