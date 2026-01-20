@@ -16,6 +16,14 @@ Built with **PHP** and **SQLite**, Donewise is lightweight, privacy-focused, and
     * **Mentions:** Assign tasks to family members using `@username`.
 * **Drag & Drop:** Reorder tasks and tags to prioritize what matters most.
 
+### ⚡ New Power Features
+* **Smart API & Shortcuts:**
+    * **Natural Language Parsing:** Add tasks via Siri/Shortcuts by saying "Buy milk next Friday" — it auto-schedules to the correct date.
+    * **QR Code Connect:** Scan a QR code in Settings to instantly link mobile devices.
+* **Checklists (Subtasks):** Break complex tasks down into smaller steps (e.g., "Recipe" -> "Ingredients"). Supports @mentions within items!
+* **Quick Snooze:** Push a task to "Tomorrow" with a single tap (💤 button).
+* **Global Search:** Instantly find past tasks or notes across your entire history.
+
 ### Organization & Details
 * **Recurring Tasks:** Set items to repeat automatically every X days (e.g., "Water plants") or on specific days of the week (e.g., "Take out trash" every Thursday).
 * **Rich Task Details:** Click any task to:
@@ -112,7 +120,7 @@ Open your browser and visit:
 
 ### 2. Apply Feature Updates
 
-To enable all latest features (Recurring tasks, Attachments, Tags, etc.), **visit the following URLs in order**. Even if you are installing fresh, run these to ensure the schema is complete.
+To enable all latest features (Smart Shortcuts, Subtasks, Snooze), **visit the following URLs in order**. Even if you are installing fresh, run these to ensure the schema is complete.
 
 1. `http://localhost:8088/update_db_v4.php` (Group Owners)
 2. `http://localhost:8088/update_db_v5.php` (Tags)
@@ -121,6 +129,7 @@ To enable all latest features (Recurring tasks, Attachments, Tags, etc.), **visi
 5. `http://localhost:8088/update_db_v8.php` (Schema Patches)
 6. `http://localhost:8088/update_db_v9.php` (Latest Schema)
 7. `http://localhost:8088/update_recurring.php` (Recurring Logic)
+8. `http://localhost:8088/update_features.php` (Subtasks & API Tokens) **<-- NEW**
 
 > **Security Tip:** After setup, delete `install.php` and the `update_*.php` files from the server:
 > ```bash
@@ -140,24 +149,25 @@ To enable all latest features (Recurring tasks, Attachments, Tags, etc.), **visi
 2. Create your first Group (e.g., "Home").
 3. You are now the **Group Owner**.
 
+### API & Shortcuts (iOS/Android)
+
+1. Go to **Settings** -> **API Access**.
+2. Scan the **QR Code** to get your Token.
+3. Point your shortcut to `POST /api/add_task.php` with Header `Authorization: Bearer <token>`.
+4. **Smart Dates:** Send text like "Book vet appointment in 3 days" or "Buy eggs next Monday" and Donewise will handle the date automatically.
+
 ### Managing Tasks
 
 * **Add:** Type in the main input. Use `#` for tags (e.g., `#urgent`) and `@` to assign users.
 * **Edit:** Click the **pencil icon** to rename or tap the task text to open **Task Details**.
-* **Details View:** Inside Task Details, you can upload photos (receipts, screenshots) or chat about the task in the comments.
-* **Move:** Need to delay a task? Open details and select a new date.
+* **Subtasks:** In Task Details, add checklist items (e.g. ingredients). You can even `@mention` people in subtasks!
+* **Snooze:** Click the **💤** button on any task to instantly move it to tomorrow.
 
 ### Recurring Items
 
 1. Click **Recurring** in the top navigation.
 2. Create rules like "Pay Internet Bill" every "28 Days".
 3. Donewise automatically checks these rules when you visit the app and adds the task to "Today" if it's due.
-
-### Group Settings
-
-1. Click **Group** in the header.
-2. **Invite:** Copy the Invite Link and send it to others.
-3. **Manage:** Rename the group, manage custom tags (change colors/delete), or remove members.
 
 ---
 

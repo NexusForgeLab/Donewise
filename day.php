@@ -26,6 +26,28 @@ function get_assignee_from_text($pdo, $groupId, $text) {
     return null;
 }
 
+// HANDLE SNOOZE (Move to Tomorrow)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['snooze_task_id'])) {
+    csrf_check();
+    $snoozeId = (int)$_POST['snooze_task_id'];
+    
+    // Verify Ownership
+    $st = $pdo->prepare("SELECT id FROM tasks WHERE id=? AND group_id=?");
+    $st->execute([$snoozeId, $user['group_id']]);
+    if ($st->fetch()) {
+        $tomorrow = date('Y-m-d', strtotime('+1 day'));
+        // Find/Create Tomorrow Day ID
+        $pdo->prepare("INSERT OR IGNORE INTO days(group_id, day_date) VALUES(?,?)")->execute([$user['group_id'], $tomorrow]);
+        $st = $pdo->prepare("SELECT id FROM days WHERE group_id=? AND day_date=?");
+        $st->execute([$user['group_id'], $tomorrow]);
+        $tomorrowId = (int)$st->fetchColumn();
+
+        // Move Task
+        $pdo->prepare("UPDATE tasks SET day_id=? WHERE id=?")->execute([$tomorrowId, $snoozeId]);
+    }
+    header('Location: day.php?date=' . $date); exit;
+}
+
 // HANDLE ADD TASK
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['text']) || isset($_FILES['task_image'])) && !isset($_POST['edit_mode'])) {
   csrf_check();
@@ -77,12 +99,8 @@ $filterUser = $_GET['user'] ?? 'all';
 $st = $pdo->prepare("SELECT * FROM tags WHERE group_id=? ORDER BY sort_order ASC, name ASC");
 $st->execute([$user['group_id']]);
 $tags = $st->fetchAll();
-
-// Map Tag Names to Colors/IDs for fast lookup
 $tagMap = [];
-foreach ($tags as $t) {
-    $tagMap[mb_strtolower($t['name'])] = $t;
-}
+foreach ($tags as $t) { $tagMap[mb_strtolower($t['name'])] = $t; }
 
 // Fetch Users (For Filters)
 $st = $pdo->prepare("SELECT id, username, display_name FROM users WHERE group_id=? ORDER BY display_name ASC");
@@ -115,7 +133,6 @@ $sql = "
 ";
 $params = [$dayId];
 
-// Apply User Filter
 if (is_numeric($filterUser)) {
     $sql .= " AND t.assigned_to = ?";
     $params[] = $filterUser;
@@ -131,7 +148,6 @@ $allTasks = $st->fetchAll();
 $statsUserId = is_numeric($filterUser) ? $filterUser : $user['id'];
 $statsName = ($statsUserId == $user['id']) ? "Your" : "User";
 foreach ($groupUsers as $gu) { if($gu['id'] == $statsUserId) $statsName = $gu['display_name']; }
-
 $stStat = $pdo->prepare("SELECT COUNT(*) as total, SUM(CASE WHEN is_done=1 THEN 1 ELSE 0 END) as done FROM tasks WHERE day_id=? AND assigned_to=?");
 $stStat->execute([$dayId, $statsUserId]);
 $userStats = $stStat->fetch();
@@ -139,10 +155,8 @@ $progTotal = $userStats['total'] ?: 0;
 $progDone = $userStats['done'] ?: 0;
 $progPercent = ($progTotal > 0) ? round(($progDone / $progTotal) * 100) : 0;
 
-
 // Distribute Tasks to Sections
 foreach ($allTasks as $t) {
-    // Check Filter Tag
     if (is_numeric($filterTag)) {
         $tTags = explode(',', $t['tag_ids'] ?? '');
         if (!in_array($filterTag, $tTags)) continue;
@@ -150,38 +164,25 @@ foreach ($allTasks as $t) {
         continue;
     }
 
-    // --- NEW LOGIC: Determine Section by Text Order ---
-    // 1. Parse tags from text to get order
     preg_match_all('/#(\w+)/u', $t['text'], $matches);
     $tagsInOrder = $matches[1] ?? [];
     
     $targetSectionId = 'untagged';
     $isUrgent = false;
 
-    // 2. Priority 1: Check for Urgent anywhere
     foreach ($tagsInOrder as $tagName) {
-        if (strcasecmp($tagName, 'urgent') === 0) {
-            $isUrgent = true;
-            break;
-        }
+        if (strcasecmp($tagName, 'urgent') === 0) { $isUrgent = true; break; }
     }
 
     if ($isUrgent) {
-        // Find Urgent ID
-        if (isset($tagMap['urgent'])) {
-            $targetSectionId = $tagMap['urgent']['id'];
-        }
+        if (isset($tagMap['urgent'])) { $targetSectionId = $tagMap['urgent']['id']; }
     } else {
-        // 3. Priority 2: Use First Tag
         if (!empty($tagsInOrder)) {
             $firstTagName = mb_strtolower($tagsInOrder[0]);
-            if (isset($tagMap[$firstTagName])) {
-                $targetSectionId = $tagMap[$firstTagName]['id'];
-            }
+            if (isset($tagMap[$firstTagName])) { $targetSectionId = $tagMap[$firstTagName]['id']; }
         }
     }
 
-    // Assign
     if (isset($sections[$targetSectionId])) {
         $sections[$targetSectionId]['tasks'][] = $t;
     } else {
@@ -213,9 +214,7 @@ render_header("Donewise - $date", $user);
     <?php foreach($tags as $tag): ?>
         <a href="?date=<?php echo $date; ?>&user=<?php echo $filterUser; ?>&tag=<?php echo $tag['id']; ?>" class="filter-chip <?php echo ($filterTag==$tag['id'])?'active':''; ?>">#<?php echo h($tag['name']); ?></a>
     <?php endforeach; ?>
-    
     <div style="width:1px; background:#ccc; margin:0 8px;"></div>
-    
     <a href="?date=<?php echo $date; ?>&tag=<?php echo $filterTag; ?>&user=all" class="filter-chip <?php echo ($filterUser=='all')?'active':''; ?>">All Users</a>
     <?php foreach($groupUsers as $gu): ?>
         <a href="?date=<?php echo $date; ?>&tag=<?php echo $filterTag; ?>&user=<?php echo $gu['id']; ?>" class="filter-chip <?php echo ($filterUser==$gu['id'])?'active':''; ?>" style="--tag-color:var(--accent-blue);">
@@ -249,10 +248,8 @@ render_header("Donewise - $date", $user);
 <?php foreach ($sections as $tagId => $sec): ?>
     <?php 
     $isUrgent = (isset($sec['meta']['name']) && strtolower($sec['meta']['name']) === 'urgent');
-    // Hide empty sections (except untagged if strictly empty logic desired, or urgent if preferred)
     if (empty($sec['tasks']) && !$isUrgent && $tagId !== 'untagged') continue; 
     if ($tagId === 'untagged' && empty($sec['tasks'])) continue;
-    
     $accentColor = $sec['meta']['color'] ?? '#ccc';
     ?>
 
@@ -269,11 +266,9 @@ render_header("Donewise - $date", $user);
                   
                   <div style="display:flex; align-items:flex-start; width:100%">
                       <div class="handle" style="cursor:grab; margin-right:12px; color:#ddd; font-size:1.2rem; padding-top:2px;">&#8942;</div>
-                      
                       <?php if(!empty($t['task_image'])): ?>
                         <a href="<?php echo h($t['task_image']); ?>" target="_blank"><img src="<?php echo h($t['task_image']); ?>" class="task-thumb" /></a>
                       <?php endif; ?>
-
                       <div style="flex-grow:1;">
                         <div class="text">
                             <?php 
@@ -281,20 +276,16 @@ render_header("Donewise - $date", $user);
                             $displayText = preg_replace('/#(\w+)/u', '', $displayText); 
                             echo linkify(trim($displayText)); 
                             ?>
-                            
                             <span class="tags-container" style="margin-left:8px;">
                             <?php 
-                            // Extract tags specifically from text for rendering
                             preg_match_all('/#(\w+)/u', $t['text'], $matches);
                             $tagsToRender = array_unique($matches[1] ?? []);
-                            
                             foreach($tagsToRender as $tagName) {
                                 $lowerName = mb_strtolower($tagName);
                                 if (isset($tagMap[$lowerName])) {
                                     $tg = $tagMap[$lowerName];
                                     echo "<span class='tag-pill' style='color:{$tg['color']}; border:1px solid {$tg['color']}; margin-right:4px;'>#".h($tg['name'])."</span>";
                                 } else {
-                                    // Fallback for tags in text but not in DB yet (edge case)
                                     echo "<span class='tag-pill' style='color:#777; border:1px solid #ccc; margin-right:4px;'>#".h($tagName)."</span>";
                                 }
                             }
@@ -304,7 +295,6 @@ render_header("Donewise - $date", $user);
                         <div class="muted" style="font-size:0.8rem; display:flex; align-items:center; gap:8px;">
                             <span><?php echo h($t['created_name']); ?></span>
                             <?php if ($isDone): ?> <span>• done by <?php echo h($t['done_name']); ?></span><?php endif; ?>
-                            
                             <?php if (!empty($t['assigned_name'])): ?>
                                 <span class="pill" style="background:#e3f2fd; color:#0d47a1; border-color:#90caf9;">
                                     ➜ <?php echo h($t['assigned_name']); ?>
@@ -316,6 +306,14 @@ render_header("Donewise - $date", $user);
 
                   <div style="display:flex; justify-content:flex-end; gap:5px; margin-top:5px; width:100%; padding-left:30px;">
                     <a class="btn" style="padding:6px 10px; font-size:0.8rem" href="task_details.php?id=<?php echo $t['id']; ?>">💬 <?php if($t['comment_count']>0) echo $t['comment_count']; ?></a>
+                    <?php if(!$isDone): ?>
+                    <form method="post" style="display:inline">
+                        <input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"/>
+                        <input type="hidden" name="snooze_task_id" value="<?php echo $t['id']; ?>"/>
+                        <button class="btn" title="Snooze to Tomorrow" style="padding:6px 10px; font-size:0.8rem">💤</button>
+                    </form>
+                    <?php endif; ?>
+
                     <?php if (!$isDone): ?>
                       <form method="post" action="task_done.php" style="display:inline"><input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"/><input type="hidden" name="task_id" value="<?php echo $t['id']; ?>"/><button class="btn" style="padding:6px 10px; font-size:0.8rem">✔</button></form>
                     <?php else: ?>
@@ -359,8 +357,6 @@ render_header("Donewise - $date", $user);
 <script>
 window.addEventListener('load',function(){
     if(typeof attachSuggest==='function'){attachSuggest('taskInput');attachSuggest('editText');}
-
-    // Sort Sections
     Sortable.create(document.getElementById('sectionsContainer'), {
         animation: 150, handle: '.section-header',
         onEnd: function() {
@@ -369,35 +365,20 @@ window.addEventListener('load',function(){
             fetch('api/reorder_tags.php', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids: tagIds}) });
         }
     });
-
-    // Sort/Move Tasks
     document.querySelectorAll('.section-body').forEach(el => {
         Sortable.create(el, {
             group: 'tasks', animation: 150, handle: '.handle',
             onEnd: function(evt) {
-                // 1. Handle Reorder within list
                 let ids = [];
                 evt.to.querySelectorAll('.task').forEach(div => ids.push(div.getAttribute('data-id')));
                 fetch('api/reorder.php', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids: ids}) });
-
-                // 2. Handle Section Change (Tag Reorder)
                 if (evt.from !== evt.to) {
                     const newSection = evt.to.closest('.section-wrapper');
-                    
                     const newTagId = newSection ? newSection.getAttribute('data-tag-id') : 'untagged';
-                    const taskId = evt.item.getAttribute('data-id');
-
-                    // Call API to rewrite text and assign new tag as primary
                     fetch('api/assign_tag.php', { 
-                        method: 'POST', 
-                        headers: {'Content-Type': 'application/json'}, 
-                        body: JSON.stringify({ 
-                            task_id: taskId, 
-                            tag_id: newTagId
-                        }) 
-                    }).then(() => {
-                        window.location.reload(); 
-                    });
+                        method: 'POST', headers: {'Content-Type': 'application/json'}, 
+                        body: JSON.stringify({ task_id: evt.item.getAttribute('data-id'), tag_id: newTagId}) 
+                    }).then(() => { window.location.reload(); });
                 }
             }
         });

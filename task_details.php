@@ -12,9 +12,73 @@ $st->execute([$task_id, $user['group_id']]);
 $t = $st->fetch();
 if (!$t) { header('Location: /'); exit; }
 
+// --- HANDLE SUBTASKS (AJAX) ---
+if (isset($_POST['subtask_action'])) {
+    // Clean return for AJAX
+    while (ob_get_level()) ob_end_clean(); 
+    
+    $action = $_POST['subtask_action'];
+    
+    if ($action === 'add') {
+        $text = trim($_POST['text'] ?? '');
+        if ($text) {
+            // 1. Insert Subtask
+            $pdo->prepare("INSERT INTO subtasks(task_id, text) VALUES(?,?)")->execute([$task_id, $text]);
+            
+            // 2. NEW: Handle Mentions in Subtasks
+            if (preg_match('/@([a-zA-Z0-9_]+)/', $text, $matches)) {
+                $mentionedName = $matches[1];
+                // Find User ID
+                $uSt = $pdo->prepare("SELECT id FROM users WHERE group_id=? AND username=?");
+                $uSt->execute([$user['group_id'], $mentionedName]);
+                $targetId = $uSt->fetchColumn();
+
+                if ($targetId && $targetId != $user['id'] && function_exists('send_group_notification')) {
+                    send_group_notification(
+                        $pdo, 
+                        $user['group_id'], 
+                        $user['id'], 
+                        $user['display_name'], 
+                        'mention', 
+                        "mentioned you in a checklist item on: " . $t['text'], 
+                        $task_id
+                    );
+                }
+            }
+        }
+    } elseif ($action === 'toggle') {
+        $subId = (int)$_POST['sub_id'];
+        $val = (int)$_POST['is_done'];
+        $pdo->prepare("UPDATE subtasks SET is_done=? WHERE id=? AND task_id=?")->execute([$val, $subId, $task_id]);
+    } elseif ($action === 'delete') {
+        $subId = (int)$_POST['sub_id'];
+        $pdo->prepare("DELETE FROM subtasks WHERE id=? AND task_id=?")->execute([$subId, $task_id]);
+    }
+
+    // Render List
+    $subs = $pdo->prepare("SELECT * FROM subtasks WHERE task_id=?");
+    $subs->execute([$task_id]);
+    foreach ($subs->fetchAll() as $s) {
+        $checked = $s['is_done'] ? 'checked' : '';
+        $style = $s['is_done'] ? 'text-decoration:line-through;color:#888' : '';
+        
+        // NEW: Apply linkify to make @mentions clickable and formatted
+        $displayText = linkify(h($s['text']));
+
+        echo "<div style='margin-bottom:8px; display:flex; align-items:center; justify-content:space-between; padding:4px 0; border-bottom:1px solid #eee;'>
+                <div style='display:flex; align-items:center; flex:1;'>
+                    <input type='checkbox' $checked onchange='toggleSub({$s['id']}, this.checked)' style='width:auto; margin-right:10px; height:18px; width:18px;'>
+                    <span style='$style; font-size:1rem; line-height:1.4;'>$displayText</span>
+                </div>
+                <button onclick='deleteSub({$s['id']})' style='border:none; background:none; color:#ccc; cursor:pointer; font-size:1.2rem; padding:0 8px;'>&times;</button>
+              </div>";
+    }
+    exit;
+}
+
 // --- HANDLE POST (Unified Upload + Comment) ---
 $uploadErr = '';
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['subtask_action'])) {
     csrf_check();
     
     // 1. Handle File Upload
@@ -57,12 +121,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $st = $pdo->prepare("INSERT INTO comments(group_id, task_id, user_id, parent_id, message) VALUES(?,?,?,?,?)");
         $st->execute([$user['group_id'], $task_id, $user['id'], $parent_id, $msg]);
         
-        // --- NEW: Process Mentions in Comments ---
-        // This sends notifications to mentioned users
+        // --- Process Mentions in Comments ---
         process_mentions($pdo, $user['group_id'], $user['id'], $user['display_name'], $msg, 'comment', $task_id);
 
-        // General Notification to everyone else (if not mentioned)
-        // (Optimally we shouldn't double-notify, but simpler is safer for now)
         $action = $parent_id ? "replied on:" : "commented on:";
         if (function_exists('send_group_notification')) {
             send_group_notification($pdo, $user['group_id'], $user['id'], $user['display_name'], 'comment', "$action " . $t['text'], $task_id);
@@ -137,6 +198,17 @@ render_header('Task Details', $user);
 </div>
 
 <?php if($uploadErr): ?><div class="card" style="border-color:red; color:red;"><?php echo h($uploadErr); ?></div><?php endif; ?>
+
+<div class="card">
+  <h2>Checklist</h2>
+  <div id="subtaskList" style="margin-bottom:15px;">
+    </div>
+  <form onsubmit="event.preventDefault(); addSub();" style="display:flex; gap:10px; position:relative;">
+    <input id="newSub" placeholder="Add subtask... (Type @ to mention)" required autocomplete="off" style="width:100%;">
+    <div class="suggest-list"></div>
+    <button class="btn" style="width:auto; padding:0 20px;">+</button>
+  </form>
+</div>
 
 <div class="card">
   <h2>Attachments</h2>
@@ -241,10 +313,43 @@ function cancelReply() {
   document.getElementById('replyingToBanner').style.display = 'none';
 }
 
-// ENABLE AUTOCOMPLETE FOR COMMENTS
+function loadSubs() {
+    const fd = new FormData();
+    fd.append('subtask_action', 'list');
+    fetch('task_details.php?id=<?php echo $task_id; ?>', { method:'POST', body:fd })
+    .then(r => r.text()).then(h => document.getElementById('subtaskList').innerHTML = h);
+}
+function addSub() {
+    const txt = document.getElementById('newSub');
+    if(!txt.value.trim()) return;
+    const fd = new FormData();
+    fd.append('subtask_action', 'add');
+    fd.append('text', txt.value);
+    fetch('task_details.php?id=<?php echo $task_id; ?>', { method:'POST', body:fd }).then(() => {
+        txt.value = ''; loadSubs();
+    });
+}
+function toggleSub(id, done) {
+    const fd = new FormData();
+    fd.append('subtask_action', 'toggle');
+    fd.append('sub_id', id);
+    fd.append('is_done', done ? 1 : 0);
+    fetch('task_details.php?id=<?php echo $task_id; ?>', { method:'POST', body:fd }).then(loadSubs);
+}
+function deleteSub(id) {
+    if(!confirm('Delete item?')) return;
+    const fd = new FormData();
+    fd.append('subtask_action', 'delete');
+    fd.append('sub_id', id);
+    fetch('task_details.php?id=<?php echo $task_id; ?>', { method:'POST', body:fd }).then(loadSubs);
+}
+loadSubs();
+
+// ENABLE AUTOCOMPLETE FOR COMMENTS & CHECKLIST
 window.addEventListener('load', function(){
     if(typeof attachSuggest === 'function') {
         attachSuggest('msgInput');
+        attachSuggest('newSub'); // NEW: Attach to subtask input
     }
 });
 </script>
